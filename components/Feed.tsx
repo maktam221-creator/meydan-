@@ -7,7 +7,7 @@ import PostCard from './PostCard';
 interface FeedProps {
   posts: Post[];
   currentUser: User;
-  onAddPost: (newPostData: Omit<Post, 'id' | 'user' | 'timestamp' | 'likes' | 'comments' | 'isLiked'>) => void;
+  onAddPost: (newPostData: Omit<Post, 'id' | 'user' | 'created_at' | 'likes' | 'comments' | 'isLiked'>) => Promise<void>;
   onToggleLike: (postId: string) => void;
   onAddComment: (postId: string, commentText: string) => void;
 }

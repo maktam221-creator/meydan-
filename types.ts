@@ -1,4 +1,3 @@
-
 export interface User {
   id: string;
   name: string;
@@ -9,7 +8,7 @@ export interface CommentData {
   id: string;
   user: User;
   text: string;
-  timestamp: string;
+  created_at: string;
 }
 
 export interface Post {
@@ -20,7 +19,7 @@ export interface Post {
     url: string;
     type: 'image' | 'video';
   };
-  timestamp: string;
+  created_at: string;
   likes: number;
   isLiked: boolean;
   comments: CommentData[];

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Post } from '../types';
 import HeartIcon from './icons/HeartIcon';
@@ -38,14 +37,14 @@ const PostCard: React.FC<PostCardProps> = ({ post, onToggleLike, onAddComment })
           <img src={post.user.avatar} alt={post.user.name} className="h-10 w-10 rounded-full" />
           <div className="ml-3">
             <p className="font-semibold text-white">{post.user.name}</p>
-            <p className="text-xs text-gray-400">{timeAgo(post.timestamp)} ago</p>
+            <p className="text-xs text-gray-400">{timeAgo(post.created_at)} ago</p>
           </div>
         </div>
         <p className="text-gray-300 mt-3 whitespace-pre-wrap">{post.content}</p>
       </div>
 
       {post.media && (
-        <div className="bg-black">
+        <div className="bg-black flex justify-center">
           {post.media.type === 'image' ? (
             <img src={post.media.url} alt="Post media" className="w-full max-h-[70vh] object-contain" />
           ) : (

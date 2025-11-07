@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { CommentData } from '../types';
 
@@ -43,7 +42,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ postId, comments, onAdd
             <div className="bg-gray-700 rounded-xl p-2 px-3 text-sm flex-1">
               <div className="flex items-baseline space-x-2">
                  <span className="font-semibold text-white">{comment.user.name}</span>
-                 <span className="text-xs text-gray-400">{timeAgo(comment.timestamp)}</span>
+                 <span className="text-xs text-gray-400">{timeAgo(comment.created_at)}</span>
               </div>
               <p className="text-gray-300">{comment.text}</p>
             </div>
