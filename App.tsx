@@ -5,7 +5,7 @@ import { Post, User } from './types';
 import Header from './components/Header';
 import Feed from './components/Feed';
 import Profile from './components/Profile';
-import { supabase, supabaseAnonKey } from './services/supabaseClient';
+import { supabase, supabaseUrl, supabaseAnonKey } from './services/supabaseClient';
 import { Session } from '@supabase/supabase-js';
 import Auth from './components/Auth';
 import Spinner from './components/icons/Spinner';
@@ -31,15 +31,15 @@ const SupabaseInstructions: React.FC = () => (
             <code className="bg-gray-700 px-2 py-1 rounded-md text-yellow-300 mt-1 inline-block">services/supabaseClient.ts</code>
           </li>
           <li>
-            Replace the placeholder value for <code className="bg-gray-700 px-2 py-1 rounded-md text-yellow-300">supabaseAnonKey</code> with your actual Supabase project anon key.
+            Replace the placeholder values for <code className="bg-gray-700 px-2 py-1 rounded-md text-yellow-300">supabaseUrl</code> and <code className="bg-gray-700 px-2 py-1 rounded-md text-yellow-300">supabaseAnonKey</code> with your actual Supabase project credentials.
           </li>
           <li>
-            Save the file and this page will automatically update.
+            Save the file. The application should update automatically once the correct values are provided.
           </li>
         </ol>
       </div>
        <p className="mt-6 text-sm text-gray-400">
-        You can find your anon Key in your Supabase project's settings under the <span className="font-semibold">API</span> section.
+        You can find your URL and anon Key in your Supabase project's settings under the <span className="font-semibold">API</span> section.
       </p>
     </div>
   </div>
@@ -60,33 +60,55 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
     if (!posts.length) setLoading(true); 
     setError(null);
     try {
-        const { data: profileData, error: profileError } = await supabase
+        // Fetch profile without .single() to gracefully handle cases where the profile doesn't exist yet (e.g., for legacy users).
+        let { data: profileList, error: profileQueryError } = await supabase
             .from('profiles')
             .select(`*`)
             .eq('id', session.user.id)
-            .single();
+            .limit(1);
 
-        let userProfileData = profileData;
-        if (profileError && profileError.code === 'PGRST116') {
-             if (profileError.message.includes('relation "public.profiles" does not exist')) {
+        if (profileQueryError) {
+            // If the table doesn't exist, show the setup guide.
+            if (profileQueryError.message.includes('relation "api.profiles" does not exist')) {
                 setShowSetupGuide(true);
                 setLoading(false);
                 return;
             }
-            const { data: newProfile, error: insertError } = await supabase
+            // For other errors, we throw them to be caught by the main catch block.
+            throw profileQueryError;
+        }
+
+        let userProfileData = profileList?.[0];
+
+        // If the profile wasn't found, create it on-the-fly. This handles users created before the auto-creation trigger was in place.
+        if (!userProfileData) {
+            console.warn("User profile not found. Attempting to create one for a legacy user.");
+            const { error: createError } = await supabase
                 .from('profiles')
                 .insert({
                     id: session.user.id,
-                    name: session.user.email?.split('@')[0] || 'New User',
+                    name: session.user.email, // Default name to email
                     avatar_url: `https://api.dicebear.com/8.x/thumbs/svg?seed=${session.user.id}`
-                })
-                .select()
-                .single();
+                });
+            
+            // This handles a race condition where another client creates the profile between our SELECT and INSERT.
+            // If the insert fails because it already exists (duplicate key), the subsequent SELECT will find it.
+            if (createError && createError.code !== '23505') { // 23505 is unique_violation for duplicate key
+                throw createError;
+            }
 
-            if (insertError) throw new Error(`Failed to create user profile: ${insertError.message}`);
-            userProfileData = newProfile;
-        } else if (profileError) {
-            throw profileError;
+            // Refetch the profile data to get the definitive record.
+            const { data: refetchedProfileList, error: refetchError } = await supabase
+                .from('profiles').select('*').eq('id', session.user.id).limit(1);
+            
+            if (refetchError) throw refetchError;
+
+            userProfileData = refetchedProfileList?.[0];
+            
+            if (!userProfileData) {
+                // If it's still not there, something is seriously wrong.
+                throw new Error("Fatal: Could not find or create a user profile.");
+            }
         }
         
         const userProfile = {
@@ -116,6 +138,7 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
             content: post.content,
             media: post.media_url ? { url: post.media_url, type: post.media_type as 'image' | 'video' } : undefined,
             created_at: post.created_at,
+            updated_at: post.updated_at,
             user: {
                 id: post.profiles.id,
                 name: post.profiles.name || 'Anonymous',
@@ -137,17 +160,30 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
         
         setPosts(formattedPosts);
     } catch (err: any) {
-        console.error("Error fetching data:", err);
-        // Check for common setup error: missing table
-        if (err.message && (err.message.includes('relation') && err.message.includes('does not exist'))) {
+        console.error("Error fetching data:", err.message || JSON.stringify(err));
+        
+        let errorMessage = "An unexpected error occurred while fetching data.";
+        if (err && typeof err.message === 'string') {
+          errorMessage = err.message;
+        } else if (typeof err === 'string') {
+          errorMessage = err;
+        }
+        
+        // Check for common setup errors and guide user back to setup
+        if (
+            (errorMessage.includes('relation') && errorMessage.includes('does not exist')) || 
+            errorMessage.includes('schema "api" is not exposed') ||
+            errorMessage.includes('schema must be one of the following') ||
+            errorMessage.includes('permission denied for schema api')
+        ) {
             setShowSetupGuide(true);
         } else {
-            setError(`Failed to load data: ${err.message}`);
+            setError(`Failed to load data: ${errorMessage}`);
         }
     } finally {
         setLoading(false);
     }
-  }, [session.user.id, posts.length]);
+  }, [session.user.id, session.user.email, posts.length]);
 
   useEffect(() => {
     fetchAllData();
@@ -156,7 +192,7 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
 
   useEffect(() => {
     const channel = supabase.channel('meydan-feed-changes')
-      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'api' }, () => {
         fetchAllData();
       })
       .subscribe();
@@ -177,28 +213,16 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
         });
       if (error) throw error;
     } catch (err: any) {
-      console.error("Error creating post object:", err);
+      console.error("Error creating post:", err.message || JSON.stringify(err));
       
       let errorMessage = "An unexpected error occurred. Please try again.";
-      if (err) {
-        if (typeof err.message === 'string' && err.message.trim() !== '') {
-          errorMessage = err.message;
-        } else if (typeof err === 'string' && err.trim() !== '') {
-          errorMessage = err;
-        } else {
-            try {
-                const errString = JSON.stringify(err);
-                if (errString !== '{}') {
-                    errorMessage = errString;
-                }
-            } catch {
-                // Could be a circular reference, ignore.
-            }
-        }
+      if (err && typeof err.message === 'string') {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
       }
       
       setError(`Error creating post: ${errorMessage}`);
-      // Re-throw the original error so the UI component can handle it locally
       throw err;
     }
   };
@@ -207,7 +231,10 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
     const originalPosts = posts;
     setPosts(posts.map(p => p.id === postId ? { ...p, isLiked: !p.isLiked, likes: p.isLiked ? p.likes - 1 : p.likes + 1 } : p));
     try {
-      const { data: existingLike } = await supabase.from('likes').select('id').eq('post_id', postId).eq('user_id', session.user.id).single();
+      const { data: existingLike, error } = await supabase.from('likes').select('id').eq('post_id', postId).eq('user_id', session.user.id).maybeSingle();
+      
+      if(error) throw error;
+
       if (existingLike) {
         await supabase.from('likes').delete().eq('id', existingLike.id);
       } else {
@@ -230,6 +257,45 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
     }
   };
   
+  const handleUpdatePost = async (postId: string, newContent: string) => {
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ content: newContent })
+        .eq('id', postId);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Error updating post:", err);
+      setError(`Failed to update post: ${err.message}`);
+    }
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    const originalPosts = [...posts];
+    setPosts(posts.filter(p => p.id !== postId)); // Optimistic delete
+    try {
+      const postToDelete = originalPosts.find(p => p.id === postId);
+      if (!postToDelete) throw new Error("Post not found.");
+
+      if (postToDelete.media?.url) {
+        const filePath = new URL(postToDelete.media.url).pathname.split('/media/')[1];
+        if (filePath) {
+          const { error: storageError } = await supabase.storage.from('media').remove([filePath]);
+          if (storageError) {
+            console.error("Could not delete media file, but proceeding with post deletion:", storageError.message);
+          }
+        }
+      }
+
+      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Error deleting post:", err);
+      setError(`Failed to delete post: ${err.message}`);
+      setPosts(originalPosts); // Rollback on error
+    }
+  };
+
   const handleSetupComplete = () => {
     setShowSetupGuide(false);
     fetchAllData();
@@ -260,7 +326,15 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
             </div>
         )}
         {view === 'feed' ? (
-          <Feed posts={posts} currentUser={currentUser} onAddPost={handleAddPost} onToggleLike={handleToggleLike} onAddComment={handleAddComment} />
+          <Feed 
+            posts={posts} 
+            currentUser={currentUser} 
+            onAddPost={handleAddPost} 
+            onToggleLike={handleToggleLike} 
+            onAddComment={handleAddComment}
+            onUpdatePost={handleUpdatePost}
+            onDeletePost={handleDeletePost}
+          />
         ) : (
           <Profile user={currentUser} userPosts={userPosts} likedPosts={likedPosts} />
         )}
@@ -272,25 +346,28 @@ const MainApp: React.FC<{ session: Session }> = ({ session }) => {
 const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
 
+  // Fix: Cast to string to prevent TypeScript error when credentials are provided.
+  const isConfigured = (supabaseUrl as string) !== 'YOUR_SUPABASE_URL' && (supabaseAnonKey as string) !== 'YOUR_SUPABASE_ANON_KEY';
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-    });
+    if (isConfigured) {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            setSession(session);
+        });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            setSession(session);
+        });
 
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Check if the anon key is still the placeholder
-  if (supabaseAnonKey.startsWith('ey')) {
-    return session ? <MainApp session={session} /> : <Auth />;
+        return () => subscription.unsubscribe();
+    }
+  }, [isConfigured]);
+  
+  if (!isConfigured) {
+    return <SupabaseInstructions />;
   }
 
-  // If the key is a placeholder, show instructions
-  return <SupabaseInstructions />;
+  return session ? <MainApp session={session} /> : <Auth />;
 };
 
 export default App;

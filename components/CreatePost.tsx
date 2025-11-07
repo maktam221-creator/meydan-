@@ -94,12 +94,10 @@ const CreatePost: React.FC<CreatePostProps> = ({ currentUser, onAddPost }) => {
         }
     } catch (err: any) {
         let errorMessage = 'An unknown error occurred while posting.';
-        if (err) {
-            if (typeof err.message === 'string' && err.message.trim() !== '') {
-                errorMessage = err.message;
-            } else if (typeof err === 'string' && err.trim() !== '') {
-                errorMessage = err;
-            }
+        if (err && typeof err.message === 'string') {
+          errorMessage = err.message;
+        } else if (typeof err === 'string') {
+          errorMessage = err;
         }
         setPostError(errorMessage);
     } finally {

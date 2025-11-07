@@ -1,5 +1,5 @@
 {
-  "name": "Meydan ٣",
+  "name": "Meydan",
   "description": "A social media application for sharing posts, images, and videos with features like comments, likes, and AI-powered caption generation.",
   "requestFramePermissions": [
     "camera"

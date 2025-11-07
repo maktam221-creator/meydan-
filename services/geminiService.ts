@@ -1,69 +1,59 @@
-import { GoogleGenAI } from "@google/genai";
+import { supabase } from './supabaseClient';
 import { fileToBase64 } from "../utils/fileUtils";
 
-// A single function to get the AI client to avoid repetition and handle API key check
-const getGenAI = () => {
-  if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set.");
+// A helper to invoke the function and handle different kinds of errors
+const invokeCaptionFunction = async (body: object): Promise<string> => {
+  // Supabase function invocation
+  const { data, error } = await supabase.functions.invoke('generate-caption', { body });
+  
+  // Handles network or Supabase-level errors
+  if (error) {
+    console.error("Error invoking edge function:", error);
+    throw new Error(`Function invocation failed: ${error.message}`);
   }
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+  // Handles errors returned from within the function itself (e.g., Gemini API error)
+  if (data.error) {
+    console.error("Error from edge function:", data.error);
+    throw new Error(data.error);
+  }
+
+  // Handles cases where the function returns a success status but no caption
+  if (typeof data.caption !== 'string') {
+    throw new Error("Invalid or missing caption in response from the server.");
+  }
+
+  return data.caption;
 };
 
-// Generates a caption based on user-provided text
+
+// Generates a caption based on user-provided text by calling the secure edge function
 export const generateCaptionFromText = async (userPrompt: string): Promise<string> => {
   if (!userPrompt) {
     return "Please provide some text to generate a caption.";
   }
   try {
-    const ai = getGenAI();
-    const model = 'gemini-flash-latest';
-    
-    const fullPrompt = `Generate a short, engaging, and cool social media caption.
-    The user is writing about: "${userPrompt}". 
-    Make it sound natural and add 2-3 relevant hashtags.
-    Do not wrap the response in markdown. Just return the plain text caption.`;
-
-    const response = await ai.models.generateContent({
-        model: model,
-        contents: fullPrompt,
-    });
-    
-    return response.text.trim();
+    return await invokeCaptionFunction({ type: 'text', prompt: userPrompt });
   } catch (error) {
-    console.error("Error generating caption from text with Gemini API:", error);
+    console.error("Error generating caption from text:", error);
     return "Sorry, I couldn't come up with a caption right now.";
   }
 };
 
-// Generates a caption by analyzing an image, with optional text context
+// Generates a caption by analyzing an image via the secure edge function
 export const generateCaptionFromImage = async (imageFile: File, userPrompt: string): Promise<string> => {
     try {
-        const ai = getGenAI();
-        const model = 'gemini-flash-latest'; // Multimodal model
-
         const base64Image = await fileToBase64(imageFile);
-
-        const imagePart = {
-            inlineData: {
-                mimeType: imageFile.type,
-                data: base64Image,
-            },
-        };
-        
-        const promptText = userPrompt 
-            ? `Generate a short, engaging, and cool social media caption for this image. The user provided this additional context: "${userPrompt}". Make it sound natural and add 2-3 relevant hashtags. Do not wrap the response in markdown. Just return the plain text caption.`
-            : `Generate a short, engaging, and cool social media caption for this image. Make it sound natural and add 2-3 relevant hashtags. Do not wrap the response in markdown. Just return the plain text caption.`;
-        
-        const textPart = { text: promptText };
-
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: { parts: [imagePart, textPart] },
+        return await invokeCaptionFunction({
+          type: 'image',
+          prompt: userPrompt,
+          image: {
+            data: base64Image,
+            mimeType: imageFile.type,
+          }
         });
-
-        return response.text.trim();
     } catch (error) {
-        console.error("Error generating caption from image with Gemini API:", error);
+        console.error("Error generating caption from image:", error);
         return "Sorry, I couldn't analyze the image to create a caption.";
     }
 };

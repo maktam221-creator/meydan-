@@ -20,6 +20,7 @@ export interface Post {
     type: 'image' | 'video';
   };
   created_at: string;
+  updated_at?: string;
   likes: number;
   isLiked: boolean;
   comments: CommentData[];
